@@ -4,127 +4,171 @@ const Io = std.Io;
 const enums = std.enums;
 const ascii = std.ascii;
 const fmt = std.fmt;
+const math = std.math;
+const heap = std.heap;
 const ArrayList = std.ArrayList;
-const HashMap = std.AutoHashMap;
+const StringHashMap = std.StringHashMap;
+
+const Ctx = struct {
+    arena: mem.Allocator,
+    tmp: mem.Allocator,
+};
 
 pub const Bencode = struct {
     encoded_data_buf: []u8,
-    allocator: mem.Allocator,
+    arena: heap.ArenaAllocator,
 
     const Self = @This();
 
-    const BenTypes = enum(u8) {
+    pub fn initWithFile(io: Io, allocator: mem.Allocator, file_name: []const u8) !Self {
+        var arena = heap.ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
+
+        const file_content = try Io.Dir.readFileAlloc(.cwd(), io, file_name, arena.allocator(), .unlimited);
+        return Self{
+            .encoded_data_buf = file_content,
+            .arena = arena,
+        };
+    }
+
+    pub fn initWithBuf(allocator: mem.Allocator, bencoded: []const u8) !Self {
+        var arena = heap.ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
+
+        const buf = try arena.allocator().dupe(u8, bencoded);
+
+        return Self{
+            .encoded_data_buf = buf,
+            .arena = arena,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.arena.deinit();
+        self.* = undefined;
+    }
+
+    pub fn parse(self: *Self) Tokeniser.Error![]Value {
+        const ctx: Ctx = .{
+            .arena = self.arena.allocator(),
+            .tmp = self.arena.child_allocator,
+        };
+        var values: ArrayList(Value) = .empty;
+        defer values.deinit(ctx.tmp);
+
+        var index: usize = 0;
+        while (index < self.encoded_data_buf.len) {
+            const val = try Tokeniser.parseValue(ctx, self.encoded_data_buf[index..]);
+            index += val.size;
+            try values.append(ctx.tmp, val.value);
+        }
+
+        return try ctx.arena.dupe(Value, values.items);
+    }
+
+    // impl parse one
+};
+
+const Tokeniser = struct {
+    const Error = error{
+        InvalidStringNoColon,
+        NoEndFind,
+        UnknownTypeByte,
+        InvalidDictKey,
+        MissingValue,
+        UnexpectedEnd,
+    } || fmt.ParseIntError || mem.Allocator.Error;
+
+    pub const BenTypes = enum(u8) {
         Int = 'i',
         List = 'l',
         Dict = 'd',
         String,
 
-        fn getToken(byte: u8) Errors!BenTypes {
-            const first_token = enums.fromInt(BenTypes, byte);
-            if (first_token) |token| {
-                return token;
-            } else {
-                if (ascii.isDigit(byte)) {
-                    return BenTypes.String;
-                } else {
-                    return Errors.UnknownTypeByte;
-                }
-            }
-        }
-    };
-
-    const Errors = error{
-        MissingColon,
-        UnknownTypeByte,
-    } || mem.Allocator.Error || Tokeniser.Error || fmt.ParseIntError;
-
-    pub fn initWithFile(io: Io, allocator: mem.Allocator, file_name: []const u8) !Self {
-        const file_content = try Io.Dir.readFileAlloc(.cwd(), io, file_name, allocator, .unlimited);
-        return Self{
-            .encoded_data_buf = file_content,
-            .allocator = allocator,
-        };
-    }
-
-    pub fn initWithBuf(allocator: mem.Allocator, bencoded: []const u8) !Self {
-        const buf = try allocator.alloc(u8, bencoded.len);
-        mem.copyForwards(u8, buf, bencoded);
-        return Self{
-            .encoded_data_buf = buf,
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *const Self, allocator: mem.Allocator) void {
-        allocator.free(self.encoded_data_buf);
-    }
-
-    pub fn parse(self: *const Self, allocator: mem.Allocator) Errors![]Value {
-        var values = ArrayList(Value).empty;
-        var index: usize = 0;
-
-        while (index < self.encoded_data_buf.len) {
-            const tokenType = try BenTypes.getToken(self.encoded_data_buf[index]);
-            std.debug.print("Processing token {s}", .{@tagName(tokenType)});
-            const parsed_value = brk: {
-                switch (tokenType) {
-                    .String => {
-                        break :brk try Tokeniser.parseByteString(allocator, self.encoded_data_buf[index..]);
-                    },
-                    .Int => {
-                        break :brk try Tokeniser.parseInt(self.encoded_data_buf[index..]);
-                    },
-                    else => {
-                        std.log.err("not implemented", .{});
-                        continue;
-                    },
-                }
+        pub fn getToken(byte: u8) Error!BenTypes {
+            return switch (byte) {
+                'i' => .Int,
+                'l' => .List,
+                'd' => .Dict,
+                '0'...'9' => .String,
+                else => Error.UnknownTypeByte,
             };
-
-            try values.append(allocator, parsed_value.value);
-            index += parsed_value.size;
-            std.debug.print("processed length is {d}", .{parsed_value.size});
         }
-
-        return values.toOwnedSlice(self.allocator);
-    }
-};
-
-const Tokeniser = struct {
-    const Ind = enum(u8) {
-        EndOfValue = 'e',
     };
 
-    const Error = error{
-        InvalidStringNoColon,
-    } || fmt.ParseIntError || mem.Allocator.Error;
-    pub fn parseInt(int: []const u8) !Ret {
-        return .{
-            .value = .{ .int = try fmt.parseInt(i64, int[1..], 10) },
-            .size = @sizeOf(i64),
+    pub fn parseValue(ctx: Ctx, buf: []const u8) Error!Ret {
+        if (buf.len == 0) return Error.UnexpectedEnd;
+        return switch (try BenTypes.getToken(buf[0])) {
+            .Int => parseInt(buf),
+            .String => parseByteString(buf),
+            .List => parseList(ctx, buf),
+            .Dict => parseDict(ctx, buf),
         };
     }
-    pub fn parseByteString(allocator: mem.Allocator, string: []const u8) Error!Ret {
+
+    pub fn parseInt(int: []const u8) !Ret {
+        const end = mem.indexOfScalar(u8, int, 'e') orelse return Error.NoEndFind;
+        return .{
+            .value = .{ .int = try fmt.parseInt(i64, int[1..end], 10) },
+            .size = end + 1,
+        };
+    }
+
+    pub fn parseByteString(string: []const u8) Error!Ret {
         const colon = mem.indexOfScalar(u8, string, ':') orelse return Error.InvalidStringNoColon;
         const str_size = try fmt.parseInt(usize, string[0..colon], 10);
 
-        const buf = try allocator.alloc(u8, str_size);
-        const start = colon + 1;
-        const end = start + str_size;
-
-        std.debug.print("start = {} end = {}", .{start, end});
-        @memcpy(buf, string[start..end]);
+        const start = try math.add(usize, colon, 1);
+        const end = try math.add(usize, start, str_size);
+        if (end > string.len) return Error.UnexpectedEnd;
 
         return Ret{
-            .value = .{ .byte_string = buf },
+            .value = .{ .byte_string = string[start..end] },
             .size = end,
         };
     }
-    pub fn parseDict(dict: []const u8) Ret {
-        _ = dict;
+
+    pub fn parseDict(ctx: Ctx, dict: []const u8) !Ret {
+        var map: StringHashMap(Value) = .init(ctx.arena);
+        var i: usize = 1;
+
+        while (true) {
+            if (i >= dict.len) return Error.NoEndFind;
+            if (dict[i] == 'e') break; // End found;
+
+            if (try BenTypes.getToken(dict[i]) != .String) return Error.InvalidDictKey;
+            const key = try Tokeniser.parseByteString(dict[i..]);
+            i += key.size;
+
+            if (i >= dict.len or dict[i] == 'e') return Error.MissingValue;
+
+            const val = try parseValue(ctx, dict[i..]);
+            i += val.size;
+
+            try map.put(key.value.byte_string, val.value);
+        }
+
+        return .{
+            .value = .{ .dict = map },
+            .size = i + 1,
+        };
     }
-    pub fn parseList(list: []const u8) Ret {
-        _ = list;
+
+    pub fn parseList(ctx: Ctx, list: []const u8) Error!Ret {
+        var list_values: ArrayList(Value) = .empty;
+        defer list_values.deinit(ctx.tmp);
+        var i: usize = 1;
+        while (true) {
+            if (i >= list.len) return Error.NoEndFind;
+            if (list[i] == 'e') break;
+            const val = try parseValue(ctx, list[i..]);
+            i += val.size;
+            try list_values.append(ctx.tmp, val.value);
+        }
+        return .{
+            .value = .{ .list = try ctx.arena.dupe(Value, list_values.items) },
+            .size = i + 1,
+        };
     }
 
     const Ret = struct {
@@ -137,20 +181,5 @@ pub const Value = union(enum) {
     int: i64,
     byte_string: []const u8,
     list: []Value,
-    dict: HashMap([]const u8, Value),
-
-    pub fn deinit(allocator: mem.Allocator, values: []Value) void {
-        std.debug.print("{any}", .{values});
-        for (values) |value| {
-            switch (value) {
-                .byte_string => |str| {
-                    allocator.free(str);
-                },
-                else => {
-                    std.log.debug("no need to free", .{});
-                },
-            }
-        }
-        allocator.free(values);
-    }
+    dict: StringHashMap(Value),
 };
