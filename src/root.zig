@@ -1,8 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
 const becoded = @import("bencode.zig");
-const Bencode = becoded.Bencode;
-const Value = becoded.Value;
+
+pub const Bencode = becoded.Bencode;
+pub const Value = becoded.Value;
 
 // ============================================================================
 // Helpers

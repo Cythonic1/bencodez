@@ -28,7 +28,7 @@ const bencodez = b.dependency("bencodez", .{
         .optimize = optimize,
         });
 
-exe.root_module.addImport("httpz", bencodez.module("bencodez"));
+exe.root_module.addImport("bencodez", bencodez.module("bencodez"));
 ```
 
 
@@ -38,10 +38,12 @@ exe.root_module.addImport("httpz", bencodez.module("bencodez"));
 
 ```zig
 const std = @import("std");
+const BencodeModule = @import("bencodez");
+const Bencode = BencodeModule.Bencode;
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
-    const bencode_data = "d8:announce12:https://example.com/12:created_timei1698765432e12:info12:file12:filename12:lengthi1234567890ee"; // Example Bencode data
+const bencode_data = "d8:announce20:https://example.com/12:created_timei1698765432e4:infod8:filename4:file6:lengthi1234567890eee";
 
     // Initialize the parser with a byte buffer
     var parser = try Bencode.initWithBuf(allocator, bencode_data);
@@ -55,6 +57,7 @@ pub fn main(init: std.process.Init) !void {
     const announce = root.get("announce").?.byte_string;
     const created_time = root.get("created_time").?.int;
     const info = root.get("info").?.dict;
+    _ = info;
 
     std.debug.print("Announce URL: {s}\n", .{announce});
     std.debug.print("Created Time: {d}\n", .{created_time});
