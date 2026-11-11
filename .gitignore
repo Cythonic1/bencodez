@@ -1,3 +1,4 @@
 assets/
 .zig-cache/
 zig-out/
+.idea/
