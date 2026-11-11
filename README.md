@@ -18,7 +18,7 @@ Ensure you have [Zig](https://ziglang.org/) installed. To use this library in yo
 
 1. **Install via Git**: Clone the repository:
 ```bash
-zig fetch --save "git+https://github.com/karlseguin/http.zig#master"
+zig fetch --save "git+https://github.com/Cythonic1/bencodez#master"
 ```
 
 2. **Configure `build.zig`**: Add the following to your project's `build.zig` to use this library:
