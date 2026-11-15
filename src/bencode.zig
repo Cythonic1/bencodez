@@ -9,21 +9,23 @@ const heap = std.heap;
 const ArrayList = std.ArrayList;
 const StringHashMap = std.StringHashMap;
 
-//  TODO: Implement the info hash tracker store simple span that track from where does `info` start and end for later to calculate the hash for it.
-
 const Ctx = struct {
     arena: mem.Allocator,
     tmp: mem.Allocator,
+    info_section: ?*infoSection = null,
+    base: usize = 0,
+};
+
+const infoSection = struct {
+    found: bool = false,
+    start: usize = 0,
+    end: usize = 0,
 };
 
 pub const Bencode = struct {
     encoded_data_buf: []u8,
     arena: heap.ArenaAllocator,
-    info_section: struct {
-        found: bool = false,
-        start: usize = 0,
-        end: usize = 0,
-    } = .{},
+    info_section: infoSection = .{},
 
     const Self = @This();
 
@@ -56,7 +58,7 @@ pub const Bencode = struct {
     }
 
     pub fn parse(self: *Self) Tokeniser.Error![]Value {
-        const ctx: Ctx = .{
+        var ctx: Ctx = .{
             .arena = self.arena.allocator(),
             .tmp = self.arena.child_allocator,
         };
@@ -65,19 +67,23 @@ pub const Bencode = struct {
 
         var index: usize = 0;
         while (index < self.encoded_data_buf.len) {
-            const val = try Tokeniser.parseValue(ctx, self.encoded_data_buf[index..]);
-            if (val.value == .dict and !self.info_section.found) {
-                if (val.value.dict.get("info")) |_| {
-                    self.info_section.found = true;
-                    self.info_section.start = index;
-                    self.info_section.end = index + val.size;
-                }
-            }
+            const slice = self.encoded_data_buf[index..];
+            ctx.base = index;
+            ctx.info_section = if (slice[0] == 'd' and !self.info_section.found) &self.info_section else null;
+
+            const val = try Tokeniser.parseValue(ctx, slice);
             index += val.size;
             try values.append(ctx.tmp, val.value);
         }
 
         return try ctx.arena.dupe(Value, values.items);
+    }
+
+    pub fn getInfoSection(self: *Self) ?[]const u8 {
+        if (self.info_section.found) {
+            return self.encoded_data_buf[self.info_section.start..self.info_section.end];
+        }
+        return null;
     }
 
     // impl parse one
@@ -143,12 +149,15 @@ const Tokeniser = struct {
     }
 
     pub fn parseDict(ctx: Ctx, dict: []const u8) !Ret {
+        var inner = ctx;
+        inner.info_section = null; // nested values must never track
+
         var map: StringHashMap(Value) = .init(ctx.arena);
         var i: usize = 1;
 
         while (true) {
             if (i >= dict.len) return Error.NoEndFind;
-            if (dict[i] == 'e') break; // End found;
+            if (dict[i] == 'e') break;
 
             if (try BenTypes.getToken(dict[i]) != .String) return Error.InvalidDictKey;
             const key = try Tokeniser.parseByteString(dict[i..]);
@@ -156,16 +165,19 @@ const Tokeniser = struct {
 
             if (i >= dict.len or dict[i] == 'e') return Error.MissingValue;
 
-            const val = try parseValue(ctx, dict[i..]);
+            const val = try parseValue(inner, dict[i..]); // inner, not ctx
+
+            if (ctx.info_section) |sec| {
+                if (!sec.found and mem.eql(u8, key.value.byte_string, "info")) {
+                    sec.* = .{ .found = true, .start = ctx.base + i, .end = ctx.base + i + val.size };
+                }
+            }
             i += val.size;
 
             try map.put(key.value.byte_string, val.value);
         }
 
-        return .{
-            .value = .{ .dict = map },
-            .size = i + 1,
-        };
+        return .{ .value = .{ .dict = map }, .size = i + 1 };
     }
 
     pub fn parseList(ctx: Ctx, list: []const u8) Error!Ret {

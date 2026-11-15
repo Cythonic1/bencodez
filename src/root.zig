@@ -30,6 +30,9 @@ test "init: file with absolute path" {
     defer bencode.deinit();
 
     const parsed = try bencode.parse();
+    if (bencode.info_section.found) {
+        std.debug.print("found..\n", .{});
+    }
     _ = parsed;
 }
 
