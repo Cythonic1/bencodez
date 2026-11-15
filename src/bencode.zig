@@ -68,11 +68,9 @@ pub const Bencode = struct {
             const val = try Tokeniser.parseValue(ctx, self.encoded_data_buf[index..]);
             if (val.value == .dict and !self.info_section.found) {
                 if (val.value.dict.get("info")) |_| {
-                    std.debug.print("[info] info found....\n", .{});
                     self.info_section.found = true;
                     self.info_section.start = index;
                     self.info_section.end = index + val.size;
-                    std.debug.print("[info] -> {s}\n", .{self.encoded_data_buf[self.info_section.start..self.info_section.end]});
                 }
             }
             index += val.size;
