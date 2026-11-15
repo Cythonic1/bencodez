@@ -14,6 +14,8 @@ This library provides a robust parser for **Bencode** (BitTorrent decoding) data
 
 ## 📦 Installation
 
+
+
 Ensure you have [Zig](https://ziglang.org/) installed. To use this library in your project:
 
 1. **Install via Git**: Clone the repository:
