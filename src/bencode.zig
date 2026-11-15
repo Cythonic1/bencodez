@@ -9,6 +9,8 @@ const heap = std.heap;
 const ArrayList = std.ArrayList;
 const StringHashMap = std.StringHashMap;
 
+//  TODO: Implement the info hash tracker store simple span that track from where does `info` start and end for later to calculate the hash for it.
+
 const Ctx = struct {
     arena: mem.Allocator,
     tmp: mem.Allocator,
@@ -17,6 +19,11 @@ const Ctx = struct {
 pub const Bencode = struct {
     encoded_data_buf: []u8,
     arena: heap.ArenaAllocator,
+    info_section: struct {
+        found: bool = false,
+        start: usize = 0,
+        end: usize = 0,
+    } = .{},
 
     const Self = @This();
 
@@ -59,6 +66,15 @@ pub const Bencode = struct {
         var index: usize = 0;
         while (index < self.encoded_data_buf.len) {
             const val = try Tokeniser.parseValue(ctx, self.encoded_data_buf[index..]);
+            if (val.value == .dict and !self.info_section.found) {
+                if (val.value.dict.get("info")) |_| {
+                    std.debug.print("[info] info found....\n", .{});
+                    self.info_section.found = true;
+                    self.info_section.start = index;
+                    self.info_section.end = index + val.size;
+                    std.debug.print("[info] -> {s}\n", .{self.encoded_data_buf[self.info_section.start..self.info_section.end]});
+                }
+            }
             index += val.size;
             try values.append(ctx.tmp, val.value);
         }

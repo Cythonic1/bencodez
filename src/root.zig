@@ -28,6 +28,9 @@ test "init: file with absolute path" {
 
     var bencode = try Bencode.initWithFile(io, allocator, "/home/misabear/Desktop/zig/bencodez/assets/archlinux-2026.11.01-x86_64.iso.torrent");
     defer bencode.deinit();
+
+    const parsed = try bencode.parse();
+    _ = parsed;
 }
 
 test "init: file with relative path" {
@@ -36,6 +39,9 @@ test "init: file with relative path" {
 
     var bencode = try Bencode.initWithFile(io, allocator, "assets/archlinux-2026.11.01-x86_64.iso.torrent");
     defer bencode.deinit();
+
+    const parsed = try bencode.parse();
+    _ = parsed;
 }
 
 // ============================================================================
